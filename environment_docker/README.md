@@ -59,9 +59,9 @@ The Wikipedia Website follows the same setup procedure as the environment used i
 
 ```
 docker load --input postmill-populated-exposed-withimg.tar
-docker run --name forum -p 9999:80 -d postmill-populated-exposed-withimg
+docker run --name forum -p 10000:80 -d postmill-populated-exposed-withimg
 ```
-Now you can visit `http://<your-server-hostname>:9999/`.
+Now you can visit `http://<your-server-hostname>:10000/`.
 
 
 ## Wikipedia Website
@@ -72,9 +72,9 @@ The Wikipedia Website follows the same setup procedure as the environment used i
 - http://metis.lti.cs.cmu.edu/webarena-images/wikipedia_en_all_maxi_2022-05.zim
 
 ```
-docker run -d --name=wikipedia --volume=<your-path-to-downloaded-folder>/:/data -p 8888:80 ghcr.io/kiwix/kiwix-serve:3.3.0 wikipedia_en_all_maxi_2022-05.zim
+docker run -d --name=wikipedia --volume=<your-path-to-downloaded-folder>/:/data -p 8889:80 ghcr.io/kiwix/kiwix-serve:3.3.0 wikipedia_en_all_maxi_2022-05.zim
 ```
-Now you can visit `http://<your-server-hostname>:8888/wikipedia_en_all_maxi_2022-05/A/User:The_other_Kiwix_guy/Landing`.
+Now you can visit `http://<your-server-hostname>:8889/wikipedia_en_all_maxi_2022-05/A/User:The_other_Kiwix_guy/Landing`.
 
 
 ## Homepage
@@ -95,6 +95,6 @@ perl -pi -e "s|<your-server-hostname>|${YOUR_ACTUAL_HOSTNAME}|g" webarena-homepa
 Then run
 ```
 cd webarena_homepage
-flask run --host=0.0.0.0 --port=4399
+flask run --host=0.0.0.0 --port=4400
 ```
-The homepage will be available at `http://<your-server-hostname>:4399`.
+The homepage will be available at `http://<your-server-hostname>:4400`.
