@@ -18,7 +18,7 @@ max_idx=234
 while [ $start_idx -le $max_idx ]
 do
     # Classifieds reset is quick, so we can do it after every example.
-    curl -X POST http://127.0.0.1:9980/index.php?page=reset -d "token=4b61655535e7ed388f0d40a93600254c"
+    curl -X POST http://127.0.0.1:9981/index.php?page=reset -d "token=4b61655535e7ed388f0d40a93600254c"
     bash prepare.sh
     python run.py \
      --instruction_path $instruction_path \
