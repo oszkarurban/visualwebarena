@@ -53,7 +53,7 @@ export DATASET=visualwebarena
 Then, set the URL for the websites
 
 ```bash
-export CLASSIFIEDS="<your_classifieds_domain>:9981" #offset by +1
+export CLASSIFIEDS="<your_classifieds_domain>:9982" #offset by +2
 export CLASSIFIEDS_RESET_TOKEN="4b61655535e7ed388f0d40a93600254c"  # Default reset token for classifieds site, change if you edited its docker-compose.yml
 export SHOPPING="<your_shopping_site_domain>:7771" #offset by +1
 export REDDIT="<your_reddit_domain>:10000" #offset by +1
