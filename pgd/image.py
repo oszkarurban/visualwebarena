@@ -493,7 +493,6 @@ def preprocess(
 
     return encoded_outputs
 
-
 def save_adv_image(adv, path):
     if adv.is_cuda:
         adv = adv.cpu().detach()
@@ -503,60 +502,99 @@ def save_adv_image(adv, path):
     # Remove the batch dimension and convert to numpy array
     save_image(adv,path)
 
-def fgsm_(captioning_model, captioning_processor,x, target, eps, targeted=True, clip_min=None, clip_max=None):
+from transformers.tokenization_utils_base import BatchEncoding, PaddingStrategy, PreTokenizedInput, TextInput, TruncationStrategy
+
+def preprocess_txt(
+        self,
+        images: ImageInput = None,
+        text: Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]] = None,
+        add_special_tokens: bool = True,
+        padding: Union[bool, str, PaddingStrategy] = False,
+        truncation: Union[bool, str, TruncationStrategy] = None,
+        max_length: Optional[int] = None,
+        stride: int = 0,
+        pad_to_multiple_of: Optional[int] = None,
+        return_attention_mask: Optional[bool] = None,
+        return_overflowing_tokens: bool = False,
+        return_special_tokens_mask: bool = False,
+        return_offsets_mapping: bool = False,
+        return_token_type_ids: bool = False,
+        return_length: bool = False,
+        verbose: bool = True,
+        return_tensors: Optional[Union[str, TensorType]] = None,
+        **kwargs,
+    ) -> BatchEncoding:
+        """
+        This method uses [`BlipImageProcessor.__call__`] method to prepare image(s) for the model, and
+        [`BertTokenizerFast.__call__`] to prepare text for the model.
+
+        Please refer to the docstring of the above two methods for more information.
+        """
+        if text is not None:
+            text_encoding = self.tokenizer(
+                text=text,
+                add_special_tokens=add_special_tokens,
+                padding=padding,
+                truncation=truncation,
+                max_length=max_length,
+                stride=stride,
+                pad_to_multiple_of=pad_to_multiple_of,
+                return_attention_mask=return_attention_mask,
+                return_overflowing_tokens=return_overflowing_tokens,
+                return_special_tokens_mask=return_special_tokens_mask,
+                return_offsets_mapping=return_offsets_mapping,
+                return_token_type_ids=return_token_type_ids,
+                return_length=return_length,
+                verbose=verbose,
+                return_tensors=return_tensors,
+                **kwargs,
+            )
+        else:
+            text_encoding = None
+
+        
+
+        return text_encoding
+
+def fgsm_(captioning_model, captioning_processor, x, target, eps, targeted=True, clip_min=None, clip_max=None):
     sucess=False
 
     """Internal process for all FGSM and PGD attacks."""    
-    # run the model and obtain the loss
-    # create a copy of the input, remove all previous associations to the compute graph...
     input_ = x.clone().detach_().to("cuda")
-    # ... and make sure we are differentiating toward that variable
     input_.requires_grad_()
 
+    inputs = preprocess(self=captioning_processor.image_processor, return_tensors="pt",images=input_, do_rescale=False)
 
-    inputs = preprocess(self=captioning_processor.image_processor, return_tensors="pt",images=input_, do_rescale=False).to(torch.device("cuda"), torch.float16)
+    text="describe the image"
+    inputs_txt= preprocess_txt(self=captioning_processor,text=text,return_tensors="pt")
+    if (inputs is not None) and (inputs_txt is not None):
+            inputs.update(inputs_txt)
+    inputs.to(torch.device("cuda"), torch.float16)
 
-    #try only torch.cuda
-    #inputs.data['pixel_values'].requires_grad = True 
+    labels = captioning_processor.tokenizer("write hello into a textfield", return_tensors="pt").input_ids
+    result = captioning_model.forward(pixel_values=inputs.pixel_values,input_ids=inputs.input_ids, labels=labels.cuda())
 
+    #res = captioning_model(pixel_values=inputs.pixel_values,input_ids=inputs.input_ids, labels=labels.cuda()) alternatively call model()
+    print(f"resonse FORWARD: {captioning_processor.batch_decode(torch.argmax(result.logits, dim=2).tolist(), skip_special_tokens=True)}")
+
+
+    print("GENERATE:")
+    inputs_i = preprocess(self=captioning_processor.image_processor, return_tensors="pt",images=input_, do_rescale=False).to(torch.device("cuda"), torch.float16)
     generation_config = dict(
     output_logits=True,
     return_dict_in_generate=True,
     max_new_tokens=target.size()[0]
     )
-    result = captioning_model.generate(
-        **inputs, **generation_config
+    result_g = captioning_model.generate(
+        **inputs_i, **generation_config
     )
     response = captioning_processor.batch_decode(
-        result.sequences, skip_special_tokens=True
+        result_g.sequences, skip_special_tokens=True
     )
-    logits = result.logits
+    print(f"resonse GENERATE: {response}")
 
-    print(f"inside fgsm: {response}")
-    if response[0]==captioning_processor.tokenizer.decode(token_ids=target,skip_special_tokens=True):
-        print("MATCHED")
-        sucess=True 
-    
-    #logits=logits[1]
-    #target = torch.LongTensor([input_ids[0][1].item()]).cuda()
-    logits=torch.vstack(logits)
-    
-    # Determine the number of missing elements
-    padding_size = logits.size()[0] - target.size()[-1]
-
-    if padding_size > 0:
-        # Pad the target tensor with eos token
-        padding = torch.full((padding_size,), captioning_processor.tokenizer.eos_token_id, device=target.device, dtype=target.dtype)
-        target = torch.cat([target, padding])
-    elif padding_size < 0:
-        # Pad the logits tensor with a large negative value
-        padding = torch.full((-padding_size, logits.size(1)), float('-inf'), device=logits.device, dtype=logits.dtype)
-        logits = torch.cat([logits, padding])
-    
-    print(logits.size(),target.size())
-    
+    loss = result.loss
     captioning_model.zero_grad()
-    loss = nn.CrossEntropyLoss()(logits,target) 
     loss.backward()
     
     if sucess==False:
@@ -575,6 +613,7 @@ def fgsm_(captioning_model, captioning_processor,x, target, eps, targeted=True, 
 
 
 def pgd(captioning_model, captioning_processor, x, target, k, eps, eps_step, targeted, clip_min, clip_max):
+    print("NEW PGD")
     x_min = (x - eps).cuda()
     x_max = (x + eps).cuda()
     
@@ -588,13 +627,12 @@ def pgd(captioning_model, captioning_processor, x, target, k, eps, eps_step, tar
         # FGSM step
         # We don't clamp here (arguments clip_min=None, clip_max=None) 
         # as we want to apply the attack as defined
-        x_adv = fgsm_(captioning_model, captioning_processor, x_adv, target, eps_step, targeted)
+        x_adv = fgsm_(captioning_model, captioning_processor, x_adv, target,eps_step, targeted)
         # Projection Step
         x_adv = torch.min(x_max, torch.max(x_min, x_adv))
         
     #if desired clip the ouput back to the image domain
     if (clip_min is not None) or (clip_max is not None):
         x_adv.clamp_(min=clip_min, max=clip_max)
-
     return x_adv
 
