@@ -203,11 +203,10 @@ def load_image_from_tensor(image_tensor, input_size=448, max_num=6): #the input 
     #to_pil = transforms.ToPILImage()
     #image = to_pil(image_tensor.squeeze(0))
 
-    transform = build_transform_pgd(input_size)
+    transform = build_transform_pgd(input_size=input_size)
     images = dynamic_preprocess_pgd(image_tensor, image_size=input_size, use_thumbnail=True, max_num=max_num)
     pixel_values = [transform(image) for image in images]
     pixel_values = torch.stack(pixel_values)
-    pixel_values = transform(image_tensor)
     return pixel_values
 
 def tensor_load_image(image_file, input_size=448):
@@ -556,55 +555,152 @@ def preprocess_txt(
 
         return text_encoding
 
-def fgsm_(captioning_model, captioning_processor, x, target, eps, targeted=True, clip_min=None, clip_max=None):
-    sucess=False
+def chat_pgd(my_self, tokenizer, pixel_values, question, generation_config, history=None, return_history=False,
+             num_patches_list=None, IMG_START_TOKEN='<img>', IMG_END_TOKEN='</img>', IMG_CONTEXT_TOKEN='<IMG_CONTEXT>',
+             verbose=False):
 
+        if history is None and pixel_values is not None and '<image>' not in question:
+            question = '<image>\n' + question
+
+        if num_patches_list is None:
+            num_patches_list = [pixel_values.shape[0]] if pixel_values is not None else []
+        assert pixel_values is None or len(pixel_values) == sum(num_patches_list)
+
+        img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+        my_self.img_context_token_id = img_context_token_id
+
+        template = get_conversation_template(my_self.template)
+        template.system_message = my_self.system_message
+        eos_token_id = tokenizer.convert_tokens_to_ids(template.sep)
+
+        history = [] if history is None else history
+        for (old_question, old_answer) in history:
+            template.append_message(template.roles[0], old_question)
+            template.append_message(template.roles[1], old_answer)
+        template.append_message(template.roles[0], question)
+        template.append_message(template.roles[1], None)
+        query = template.get_prompt()
+
+        if verbose and pixel_values is not None:
+            image_bs = pixel_values.shape[0]
+            print(f'dynamic ViT batch size: {image_bs}')
+
+        for num_patches in num_patches_list:
+            image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * my_self.num_image_token * num_patches + IMG_END_TOKEN
+            query = query.replace('<image>', image_tokens, 1)
+
+        model_inputs = tokenizer(query, return_tensors='pt')
+        input_ids = model_inputs['input_ids'].cuda()
+        attention_mask = model_inputs['attention_mask'].cuda()
+        generation_config['eos_token_id'] = eos_token_id
+        generation_output = my_self.generate(
+            pixel_values=pixel_values,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            **generation_config
+        )
+        logits = generation_output.logits
+        generation_output = generation_output.sequences
+        response = tokenizer.batch_decode(generation_output, skip_special_tokens=True)[0] 
+        response = response.split(template.sep)[0].strip()
+        history.append((question, response))
+        if return_history:
+            return response, history, logits
+        else:
+            query_to_print = query.replace(IMG_CONTEXT_TOKEN, '')
+            query_to_print = query_to_print.replace(f'{IMG_START_TOKEN}{IMG_END_TOKEN}', '<image>')
+            if verbose:
+                print(query_to_print, response)
+            return response, logits
+
+def fgsm_(captioning_model, captioning_processor, x, target, eps, targeted=True, clip_min=None, clip_max=None):
     """Internal process for all FGSM and PGD attacks."""    
     input_ = x.clone().detach_().to("cuda")
     input_.requires_grad_()
 
-    inputs = preprocess(self=captioning_processor.image_processor, return_tensors="pt",images=input_, do_rescale=False)
-
-    text="describe the image"
-    inputs_txt= preprocess_txt(self=captioning_processor,text=text,return_tensors="pt")
-    if (inputs is not None) and (inputs_txt is not None):
-            inputs.update(inputs_txt)
-    inputs.to(torch.device("cuda"), torch.float16)
-
-    labels = captioning_processor.tokenizer("write hello into a textfield", return_tensors="pt").input_ids
-    result = captioning_model.forward(pixel_values=inputs.pixel_values,input_ids=inputs.input_ids, labels=labels.cuda())
-
-    #res = captioning_model(pixel_values=inputs.pixel_values,input_ids=inputs.input_ids, labels=labels.cuda()) alternatively call model()
-    print(f"resonse FORWARD: {captioning_processor.batch_decode(torch.argmax(result.logits, dim=2).tolist(), skip_special_tokens=True)}")
-
-
-    print("GENERATE:")
-    inputs_i = preprocess(self=captioning_processor.image_processor, return_tensors="pt",images=input_, do_rescale=False).to(torch.device("cuda"), torch.float16)
-    generation_config = dict(
-    output_logits=True,
-    return_dict_in_generate=True,
-    max_new_tokens=target.size()[0]
+    generation_config_pgd = dict(
+        output_logits=True,
+        bos_token_id=captioning_processor.bos_token_id,
+        return_dict_in_generate=True,
+#        num_beams=1,
+        max_new_tokens=target.size()[-1],
+#        do_sample=False
     )
-    result_g = captioning_model.generate(
-        **inputs_i, **generation_config
-    )
-    response = captioning_processor.batch_decode(
-        result_g.sequences, skip_special_tokens=True
-    )
-    print(f"resonse GENERATE: {response}")
+    
 
-    loss = result.loss
+    # inputs = preprocess(self=captioning_processor.image_processor, return_tensors="pt",images=input_, do_rescale=False)
+
+    # text="describe the image"
+    # inputs_txt= preprocess_txt(self=captioning_processor,text=text,return_tensors="pt")
+    # if (inputs is not None) and (inputs_txt is not None):
+    #         inputs.update(inputs_txt)
+    # inputs.to(torch.device("cuda"), torch.float16)
+
+    # labels = captioning_processor.tokenizer("write hello into a textfield", return_tensors="pt").input_ids
+    # result = captioning_model.forward(pixel_values=inputs.pixel_values,input_ids=inputs.input_ids, labels=labels.cuda())
+
+    # #res = captioning_model(pixel_values=inputs.pixel_values,input_ids=inputs.input_ids, labels=labels.cuda()) alternatively call model()
+    # print(f"resonse FORWARD: {captioning_processor.batch_decode(torch.argmax(result.logits, dim=2).tolist(), skip_special_tokens=True)}")
+
+
+    # print("GENERATE:")
+    # inputs_i = preprocess(self=captioning_processor.image_processor, return_tensors="pt",images=input_, do_rescale=False).to(torch.device("cuda"), torch.float16)
+    # generation_config = dict(
+    # output_logits=True,
+    # return_dict_in_generate=True,
+    # max_new_tokens=target.size()[0]
+    # )
+    # result_g = captioning_model.generate(
+    #     **inputs_i, **generation_config
+    # )
+    # response = captioning_processor.batch_decode(
+    #     result_g.sequences, skip_special_tokens=True
+    # )
+    # print(f"resonse GENERATE: {response}")
+
+    question = '<image>\nDescribe the image. Not in a full sentence, just in a couple of words. Be concise.'
+    model_image=load_image_from_tensor(input_).to(torch.bfloat16).cuda()
+
+    response, logits = chat_pgd(captioning_model,captioning_processor, model_image, question, generation_config_pgd)
+    print(f"inside fgsm: {response}")    
+    logits=torch.vstack(logits)
+
+    if response==captioning_processor.decode(token_ids=target[0],skip_special_tokens=True):
+        print("MATCHED")
+        out=input_
+
+        #if desired clip the ouput back to the image domain
+        if (clip_min is not None) or (clip_max is not None):
+            out.clamp_(min=clip_min, max=clip_max)
+        return out
+
+    # Determine the number of missing elements
+    padding_size = logits.size()[0] - target.size()[-1]
+
+    if padding_size > 0:
+        # Pad the target tensor with eos token
+        padding = torch.full((padding_size,), captioning_processor.eos_token_id, device=target.device, dtype=target.dtype)
+        target = torch.cat([target[0], padding])
+    elif padding_size < 0:
+        # Pad the logits tensor with a large negative value
+        padding = torch.full((-padding_size, logits.size(1)), float('-inf'), device=logits.device, dtype=logits.dtype)
+        logits = torch.cat([logits, padding])
+        target=target[0]
+    else:
+        target=target[0]
+    
+    print(logits.size(),target.size())
+    
     captioning_model.zero_grad()
+    loss = nn.CrossEntropyLoss()(logits,target) 
     loss.backward()
     
-    if sucess==False:
-        #perfrom either targeted or untargeted attack
-        if targeted:
-            out = input_ - eps * input_.grad#.sign()
-        else:
-            out = input_ + eps * input_.grad#.sign()
+    #perfrom either targeted or untargeted attack
+    if targeted:
+        out = input_ - eps * input_.grad#.sign()
     else:
-        out = input_
+        out = input_ + eps * input_.grad#.sign()
+    
     
     #if desired clip the ouput back to the image domain
     if (clip_min is not None) or (clip_max is not None):
@@ -635,4 +731,3 @@ def pgd(captioning_model, captioning_processor, x, target, k, eps, eps_step, tar
     if (clip_min is not None) or (clip_max is not None):
         x_adv.clamp_(min=clip_min, max=clip_max)
     return x_adv
-

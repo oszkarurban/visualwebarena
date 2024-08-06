@@ -137,7 +137,6 @@ def config() -> argparse.Namespace:
         "--eval_captioning_model",
         type=str,
         default="Salesforce/blip2-flan-t5-xl",
-        #choices=["Salesforce/blip2-flan-t5-xl", "OpenGVLab/Mini-InternVL-Chat-4B-V1-5"],
         choices=["Salesforce/blip2-flan-t5-xl"],
         help="Captioning backbone for VQA-type evals.",
     )
@@ -145,7 +144,6 @@ def config() -> argparse.Namespace:
         "--captioning_model",
         type=str,
         default="Salesforce/blip2-flan-t5-xl",
-        #choices=["Salesforce/blip2-flan-t5-xl", "llava-hf/llava-1.5-7b-hf", "OpenGVLab/Mini-InternVL-Chat-4B-V1-5"],
         choices=["Salesforce/blip2-flan-t5-xl", "llava-hf/llava-1.5-7b-hf"],
         help="Captioning backbone for accessibility tree alt text.",
     )
