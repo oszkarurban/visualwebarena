@@ -216,13 +216,58 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
                 client.send("Accessibility.enable")
                 client.detach()
 
-    def _get_obs(self) -> dict[str, Observation]:
-        obs = self.observation_handler.get_observation(self.page)
+    def _get_obs(self, pgd_alt_image) -> dict[str, Observation]:
+        obs = self.observation_handler.get_observation(self.page, pgd_alt_image)
         return obs
+    # def _get_obs(self) -> dict[str, Observation]:
+    #     obs = self.observation_handler.get_observation(self.page)
+    #     return obs
 
     def _get_obs_metadata(self) -> dict[str, ObservationMetadata]:
         metadata = self.observation_handler.get_observation_metadata()
         return metadata
+
+    # @beartype
+    # def reset(
+    #     self,
+    #     *,
+    #     seed: int | None = None,
+    #     options: dict[str, str] | None = None,
+    # ) -> tuple[dict[str, Observation], dict[str, Any]]:
+    #     """
+    #     Reset the environment.
+    #     :param options: options for the environment. The current supported options are:
+    #         - "storage_state": the storage state of the browser. It is a file path to a json file.
+    #     """
+    #     super().reset(seed=seed, options=options)
+    #     if self.reset_finished:
+    #         self.context_manager.__exit__()
+
+    #     if options is not None and "config_file" in options:
+    #         config_file = Path(options["config_file"])
+    #         if config_file.exists():
+    #             self.setup(config_file=config_file)
+    #         else:
+    #             raise ValueError(f"Config file {config_file} does not exist.")
+    #     else:
+    #         self.setup()
+    #     self.reset_finished = True
+
+    #     self.page.wait_for_timeout(int(self.sleep_after_execution * 1000))
+
+    #     #observation = self._get_obs()
+    #     #PGD
+    #     observation = self._get_obs()
+    #     config_file = Path(options["config_file"])
+        
+    #     observation_metadata = self._get_obs_metadata()
+    #     info = {
+    #         "page": DetachedPage(self.page.url, ""),
+    #         "fail_error": "",
+    #         "observation_metadata": observation_metadata,
+    #     }
+
+    #     return (observation, info)
 
     @beartype
     def reset(
@@ -230,6 +275,7 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
         *,
         seed: int | None = None,
         options: dict[str, str] | None = None,
+        pgd_image_alt
     ) -> tuple[dict[str, Observation], dict[str, Any]]:
         """
         Reset the environment.
@@ -252,7 +298,11 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
 
         self.page.wait_for_timeout(int(self.sleep_after_execution * 1000))
 
-        observation = self._get_obs()
+        #observation = self._get_obs()
+        #PGD
+        observation = self._get_obs(pgd_image_alt)
+        config_file = Path(options["config_file"])
+        
         observation_metadata = self._get_obs_metadata()
         info = {
             "page": DetachedPage(self.page.url, ""),
@@ -271,7 +321,7 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
             self.context_manager.__exit__()
 
     def step(
-        self, action: Action
+        self, action: Action, pgd_image_alt
     ) -> tuple[dict[str, Observation], float, bool, bool, dict[str, Any]]:
         if not self.reset_finished:
             raise RuntimeError("Call reset first before calling step.")
@@ -290,7 +340,7 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
         except Exception as e:
             fail_error = str(e)
 
-        observation = self._get_obs()
+        observation = self._get_obs(pgd_image_alt)
         observation_metadata = self._get_obs_metadata()
 
         info = {

@@ -8,6 +8,7 @@ from transformers import (
     Blip2Processor,
 )
 
+from pgd.image import preprocess
 
 def get_captioning_fn(
     device, dtype, model_name: str = "Salesforce/blip2-flan-t5-xl"
@@ -33,6 +34,7 @@ def get_captioning_fn(
             inputs = captioning_processor(
                 images=images, return_tensors="pt"
             ).to(device, dtype)
+            #inputs = preprocess(self=captioning_processor.image_processor, return_tensors="pt",images=images, do_rescale=False)
             generated_ids = captioning_model.generate(
                 **inputs, max_new_tokens=max_new_tokens
             )

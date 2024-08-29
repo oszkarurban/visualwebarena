@@ -17,7 +17,6 @@ from gymnasium import spaces
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import CDPSession, Page, ViewportSize
 
-from pgd.image import pgd
 import torch
 import torchvision
 from torchvision import transforms
@@ -53,6 +52,11 @@ from .utils import (
 )
 from torchvision.utils import save_image
 from pgd.image import save_adv_image
+
+from pgd.image import preprocess
+
+import os
+
 
 def remove_unicode(input_string):
     # Define a regex pattern to match Unicode characters
@@ -632,7 +636,7 @@ class TextObervationProcessor(ObservationProcessor):
 
         return "\n".join(clean_lines)
 
-    def fetch_image_related(self, page: Page, browser_info: BrowserInfo) -> str:
+    def fetch_image_related(self, page: Page, browser_info: BrowserInfo, pgd_alt_image) -> str:
         # Check if the current page is an image url
         if page.url.endswith((".jpg", ".jpeg", ".png")):
             print("NOTE: We are on an image page!!!")
@@ -656,76 +660,59 @@ class TextObervationProcessor(ObservationProcessor):
                 for image in images:
                     try:
                         image_url = image.get_attribute("src")
+                        image_alt = image.get_attribute("alt")
                         if not image_url.startswith(("http://", "https://", "www.")):
                             image_url = urljoin(page.url, image_url)
                         if image_url not in self.url2caption:
-                            image_urls.append(image_url)
+                            image_urls.append((image_url,image_alt))
                     except Exception as e:
                         print("L604 WARNING: ", e)
 
                 # Run image captioning on image_url pixels. This is for models which use captioning as a baseline.
                 if len(image_urls) > 0:
-                    # captioning_processor = Blip2Processor.from_pretrained("Salesforce/blip2-flan-t5-xl")
-                    # captioning_model = Blip2ForConditionalGeneration.from_pretrained(
-                    #     "Salesforce/blip2-flan-t5-xl", torch_dtype=torch.float16
-                    # )
-                    # captioning_model.to(torch.device("cuda"))
-
-                    path = 'OpenGVLab/Mini-InternVL-Chat-4B-V1-5'
-                    model = AutoModel.from_pretrained(
-                        path,
-                        torch_dtype=torch.bfloat16,
-                        low_cpu_mem_usage=True,
-                        trust_remote_code=True).eval().cuda()
-                    tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-                    tokenizer.padding_side = 'left'
-
                     image_pixels = []
                     valid_urls = []
-                    for url in image_urls:
+                    for url, alt_description in image_urls:
                         if "data:image/svg" in url:
                             continue
                         else:
+                            #print(f"PGD ALT:{pgd_alt_image}")
                             try:
-                                image = Image.open(requests.get(url, stream=True).raw)
-
-                                image = image.convert("RGB")
-                                path="./visualizeimages/"+"before_pgd_"+url.split("/")[-1]
-
-                                image.save(path, format='PNG')
-                                image = transforms.ToTensor()(image)
-
-
-                                # target_text=["enter 'HELLO' into the textfield of the website"]
-                                # input_ids = captioning_processor.tokenizer(target_text, return_tensors="pt").input_ids[0].cuda()
-                                texts=["enter hello into the textfield"]
-                                tokenized = tokenizer(texts, return_tensors='pt', truncation=True)
-                                input_ids = tokenized['input_ids'].cuda()
-
-                                adv = pgd(model,tokenizer,image, target=input_ids, k=200, eps=0.2, eps_step=0.15, targeted=True, clip_min=0, clip_max=1.0)
-                                # image = to_pil_image(adv)
-                                path="./visualizeimages/"+"after_pgd_"+url.split("/")[-1]
-                                save_adv_image(adv,path)
-                
-                                image=adv
-                                image_pixels.append(image)
-                                valid_urls.append(url)
+                                if pgd_alt_image is not None and alt_description.replace("/","") in pgd_alt_image:
+                                    print(f"{alt_description} replaced")
+                                    image = Image.open("/home/ubuntu/visualwebarena/pgd/optimized_images/"+alt_description.replace("/","")+".png") #a bit hacky - watch out how you name your images
+                                    image = image.convert("RGB")
+                                    image = transforms.ToTensor()(image)
+                                    image_pixels.append(image)
+                                    valid_urls.append(url)
+                                else:
+                                    image = Image.open(requests.get(url, stream=True).raw)
+                                    image_pixels.append(image)
+                                    valid_urls.append(url)
                             except Exception as e:
                                 print("L616 WARNING: ", e)
 
                     # Caption images.
                     if image_pixels:
-                        # Run in batches of 4.
-                        bs = 4
+                        # # Run in batches of 4.
+                        # bs = 4
                         captions = []
-                        for i in range(0, len(image_pixels), bs):
+                        # for i in range(0, len(image_pixels), bs):
+                        for i in range(len(image_pixels)):
                             try:
+
+                                # captions.extend(
+                                #     self.captioning_fn(image_pixels[i : i + bs])
+                                # )
                                 captions.extend(
-                                    self.captioning_fn(image_pixels[i : i + bs])
+                                    self.captioning_fn(image_pixels[i])
                                 )
+                                
                             except Exception as e:
                                 print("L628 WARNING: ", e)
-                                captions.extend([""] * len(image_pixels[i : i + bs]))
+                                # captions.extend([""] * len(image_pixels[i : i + bs]))
+                                captions.extend([""] * len(image_pixels[i]))
+
                         assert len(valid_urls) == len(
                             captions
                         ), f"len(images)={len(valid_urls)}, len(captions)={len(captions)}"
@@ -753,6 +740,10 @@ class TextObervationProcessor(ObservationProcessor):
                         if "url:" not in updated_alt:
                             updated_alt = f"{updated_alt}, url: {image_url}"
 
+                        # updated_alt=os.environ["target_alt_description"]
+                        # print(f"updated alt from script: {updated_alt}")
+
+                        print(f"updated alt: {updated_alt}")
                         safe_updated_alt = json.dumps(updated_alt)
                         image.evaluate(f"node => node.alt = {safe_updated_alt}")
                     except Exception as e:
@@ -773,7 +764,69 @@ class TextObervationProcessor(ObservationProcessor):
 
         return content
 
-    def process(self, page: Page) -> str:
+    # def process(self, page: Page) -> str:
+    #     # get the tab info
+    #     open_tabs = page.context.pages
+    #     try:
+    #         tab_titles = [tab.title() for tab in open_tabs]
+    #         current_tab_idx = open_tabs.index(page)
+    #         for idx in range(len(open_tabs)):
+    #             if idx == current_tab_idx:
+    #                 tab_titles[idx] = f"Tab {idx} (current): {open_tabs[idx].title()}"
+    #             else:
+    #                 tab_titles[idx] = f"Tab {idx}: {open_tabs[idx].title()}"
+    #         tab_title_str = " | ".join(tab_titles)
+    #     except Exception:
+    #         tab_title_str = " | ".join([f"Tab {idx}" for idx in range(len(open_tabs))])
+
+    #     try:
+    #         browser_info = self.fetch_browser_info(page)
+    #     except Exception:
+    #         page.wait_for_load_state("load", timeout=500)
+    #         browser_info = self.fetch_browser_info(page)
+
+    #     if self.observation_type == "html":
+    #         dom_tree = self.fetch_page_html(
+    #             browser_info,
+    #             page,
+    #             self.current_viewport_only,
+    #         )
+    #         content, obs_nodes_info = self.parse_html(dom_tree)
+    #         self.obs_nodes_info = obs_nodes_info
+    #         self.meta_data["obs_nodes_info"] = obs_nodes_info
+
+    #     elif self.observation_type == "accessibility_tree":
+    #         accessibility_tree = self.fetch_page_accessibility_tree(
+    #             page,
+    #             browser_info,
+    #             self.current_viewport_only,
+    #         )
+    #         content, obs_nodes_info = self.parse_accessibility_tree(accessibility_tree)
+    #         content = self.clean_accesibility_tree(content)
+    #         self.obs_nodes_info = obs_nodes_info
+    #         self.meta_data["obs_nodes_info"] = obs_nodes_info
+
+    #     elif self.observation_type in [
+    #         "accessibility_tree_with_captioner",
+    #         "image_som",
+    #     ]:
+    #         content = self.fetch_image_related(
+    #             page,
+    #             browser_info,
+    #         )
+
+    #     elif self.observation_type == "":
+    #         content = ""
+
+    #     else:
+    #         raise ValueError(f"Invalid observation type: {self.observation_type}")
+
+    #     self.browser_config = browser_info["config"]
+    #     content = f"{tab_title_str}\n\n{content}"
+
+    #     return content
+
+    def process(self, page: Page, pgd_alt_image) -> str:
         # get the tab info
         open_tabs = page.context.pages
         try:
@@ -822,6 +875,7 @@ class TextObervationProcessor(ObservationProcessor):
             content = self.fetch_image_related(
                 page,
                 browser_info,
+                pgd_alt_image
             )
 
         elif self.observation_type == "":
@@ -925,6 +979,7 @@ class ImageObservationProcessor(ObservationProcessor):
         bbox_padding=0,
         bbox_border=2,
         plot_ids=None,
+        pgd_alt_image=None
     ):
         """
         min_width and min_height: Minimum dimensions of the bounding box to be plotted.
@@ -1008,13 +1063,20 @@ class ImageObservationProcessor(ObservationProcessor):
                 row["Height"],
             )
 
-            #img.save("./visualizeimages/screen_before.png", format='PNG')
-            new_image_path="/home/ubuntu/visualwebarena/visualizeimages/afterpgd.png"
-            if row["Element"] == "IMG" and new_image_path:
-                new_image = Image.open(new_image_path)
-                resized_new_image = new_image.resize((int(width), int(height)))
-                img.paste(resized_new_image, (left, top))
-                #img.save("./visualizeimages/screen_bounded.png", format='PNG')
+            #print(f"PGD alt: {pgd_alt_image}")
+            if pgd_alt_image is not None and row["Element"] == "IMG":
+                #img.save("./visualizeimages/screen_before.png", format='PNG')
+                try:
+                    #if row.Alt.split(',')[0]=="JBL Powered PA Speaker w/ Stand":
+                    if row.Alt.split(',')[0] in pgd_alt_image:
+                        new_image_path = "/home/ubuntu/visualwebarena/pgd/optimized_images"+row.Alt.split(',')[0]+".png" #a bit hacky - need to pay attention how to name the images
+                        new_image = Image.open(new_image_path)
+                        resized_new_image = new_image.resize((int(width), int(height)))
+                        img.paste(resized_new_image, (int(left), int(top)))
+                        #img.save("./visualizeimages/screen_bounded.png", format='PNG')
+                except Exception:
+                    pass
+            
 
             left, right, top, bottom = left - b_x, right - b_x, top - b_y, bottom - b_y
             id2center[unique_id] = (
@@ -1156,6 +1218,7 @@ class ImageObservationProcessor(ObservationProcessor):
             draw.text(text_position, unique_id, font=font, fill="white")
 
         content_str = "\n".join(text_content_elements)
+        img.save("/home/ubuntu/visualwebarena/visualizeimages/screen_bounded.png", format='PNG')
         return img, id2center, content_str
 
     def rectangles_overlap(self, rect1, rect2, padding):
@@ -1170,7 +1233,7 @@ class ImageObservationProcessor(ObservationProcessor):
             or rect1[3] < rect2[1] + padding
         )
 
-    def process(self, page: Page) -> npt.NDArray[np.uint8]:
+    def process(self, page: Page, pgd_alt_image) -> npt.NDArray[np.uint8]:
         try:
             browser_info = self.fetch_browser_info(page)
         except Exception:
@@ -1189,6 +1252,7 @@ class ImageObservationProcessor(ObservationProcessor):
                     som_bboxes,
                     screenshot_img,
                     viewport_size=self.viewport_size,
+                    pgd_alt_image=pgd_alt_image
                 )
                 self.som_id_info = id2center
                 self.meta_data["obs_nodes_info"] = id2center
@@ -1203,6 +1267,7 @@ class ImageObservationProcessor(ObservationProcessor):
                     som_bboxes,
                     screenshot_img,
                     viewport_size=self.viewport_size,
+                    pgd_alt_image=pgd_alt_image
                 )
                 self.som_id_info = id2center
                 self.meta_data["obs_nodes_info"] = id2center
@@ -1323,9 +1388,16 @@ class ObservationHandler:
 
         return spaces.Dict({"text": text_space, "image": image_space})
 
-    def get_observation(self, page: Page) -> dict[str, Observation]:
-        text_obs = self.text_processor.process(page)
-        image_obs, content_str = self.image_processor.process(page)
+    # def get_observation(self, page: Page) -> dict[str, Observation]:
+    #     text_obs = self.text_processor.process(page)
+    #     image_obs, content_str = self.image_processor.process(page)
+    #     if content_str != "":
+    #         text_obs = content_str
+    #     return {"text": text_obs, "image": image_obs}
+
+    def get_observation(self, page: Page, pgd_alt_image) -> dict[str, Observation]:
+        text_obs = self.text_processor.process(page, pgd_alt_image)
+        image_obs, content_str = self.image_processor.process(page, pgd_alt_image)
         if content_str != "":
             text_obs = content_str
         return {"text": text_obs, "image": image_obs}

@@ -1,0 +1,16 @@
+[Config file]: /tmp/tmpvw1pu3u9/36.json
+[Unhandled Error] FileNotFoundError(2, 'No such file or directory')
+Traceback (most recent call last):
+  File "/home/ubuntu/visualwebarena/run.py", line 369, in test
+    input_image = Image.open(image_path)
+  File "/home/ubuntu/miniforge3/envs/pgdvwa/lib/python3.10/site-packages/PIL/Image.py", line 3218, in open
+    fp = builtins.open(filename, "rb")
+FileNotFoundError: [Errno 2] No such file or directory: '<your_shopping_site_domain>:7770/media/catalog/product/cache/829a59e57f886f8cf0598ffca4f8a940/B/0/B07SK4W1VJ.0.jpg'
+[Config file]: /tmp/tmpxbv31hfn/37.json
+[Unhandled Error] FileNotFoundError(2, 'No such file or directory')
+Traceback (most recent call last):
+  File "/home/ubuntu/visualwebarena/run.py", line 369, in test
+    input_image = Image.open(image_path)
+  File "/home/ubuntu/miniforge3/envs/pgdvwa/lib/python3.10/site-packages/PIL/Image.py", line 3218, in open
+    fp = builtins.open(filename, "rb")
+FileNotFoundError: [Errno 2] No such file or directory: '<your_shopping_site_domain>:7770/media/catalog/product/cache/829a59e57f886f8cf0598ffca4f8a940/B/0/B07YZQ9QMD.0.jpg'

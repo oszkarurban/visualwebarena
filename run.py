@@ -64,9 +64,13 @@ file_handler.setFormatter(formatter)
 
 
 def config() -> argparse.Namespace:
+
     parser = argparse.ArgumentParser(
         description="Run end-to-end evaluation on the benchmark"
     )
+    #PGD
+    parser.add_argument("--pgd_image_alt", type=str, nargs='+', default=None)
+    #
     parser.add_argument(
         "--render", action="store_true", help="Render the browser"
     )
@@ -364,7 +368,7 @@ def test(
                     for image_path in image_paths:
                         # Load image either from the web or from a local path.
                         if image_path.startswith("http"):
-                            input_image = Image.open(requests.get(image_path, stream=True).raw)
+                            input_image = Image.open(requests.get(image_path, stream=True).raw)    
                         else:
                             input_image = Image.open(image_path)
 
@@ -375,7 +379,9 @@ def test(
 
             agent.reset(config_file)
             trajectory: Trajectory = []
-            obs, info = env.reset(options={"config_file": config_file})
+            # obs, info = env.reset(options={"config_file": config_file})
+            obs, info = env.reset(options={"config_file": config_file}, pgd_image_alt=args.pgd_image_alt)
+
             state_info: StateInfo = {"observation": obs, "info": info}
             trajectory.append(state_info)
 
@@ -417,7 +423,7 @@ def test(
                 if action["action_type"] == ActionTypes.STOP:
                     break
 
-                obs, _, terminated, _, info = env.step(action)
+                obs, _, terminated, _, info = env.step(action,pgd_image_alt=args.pgd_image_alt)
                 state_info = {"observation": obs, "info": info}
                 trajectory.append(state_info)
 
